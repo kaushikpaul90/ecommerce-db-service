@@ -25,8 +25,8 @@ jobs:
         uses: docker/login-action@v2
         with:
           # registry: ${{ secrets.DOCKER_REGISTRY || 'docker.io' }}
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
       - name: Build and push image
         uses: docker/build-push-action@v5
@@ -35,8 +35,8 @@ jobs:
           file: ./Dockerfile
           push: true
           # tags: |
-          #   ${{ secrets.DOCKER_REGISTRY || 'docker.io' }}/${{ secrets.DOCKER_USERNAME }}/db-service:latest
-          #   ${{ secrets.DOCKER_REGISTRY || 'docker.io' }}/${{ secrets.DOCKER_USERNAME }}/db-service:${{ github.sha }}
+          #   ${{ secrets.DOCKER_REGISTRY || 'docker.io' }}/${{ secrets.DOCKER_HUB_USERNAME }}/db-service:latest
+          #   ${{ secrets.DOCKER_REGISTRY || 'docker.io' }}/${{ secrets.DOCKER_HUB_USERNAME }}/db-service:${{ github.sha }}
           platforms: linux/amd64,linux/arm64
 
       - name: Finish
