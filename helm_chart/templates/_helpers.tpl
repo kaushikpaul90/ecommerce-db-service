@@ -1,7 +1,7 @@
-{{- define "database-service.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
+{{- define "db-service.name" -}}
+db-service
 {{- end -}}
 
-{{- define "database-service.fullname" -}}
-{{- printf "%s-%s" (include "database-service.name" .) .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- define "db-service.fullname" -}}
+{{ include "db-service.name" . }}
 {{- end -}}

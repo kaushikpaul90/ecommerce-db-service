@@ -1,109 +1,181 @@
 #!/usr/bin/env bash
-# deploy.sh - Build (optional) and deploy db-service Helm chart to local Minikube
-#
-# Usage examples:
-# 1) Default demo deploy (build local image, NodePort 30005, demo creds):
-#    ./deploy.sh
-#
-# 2) Override Postgres credentials (cleartext, local run ok):
-#    POSTGRES_USER=demo POSTGRES_PASSWORD=demo123 POSTGRES_DB=demodb ./deploy.sh
-#
-# 3) Use image in registry (skip local build):
-#    USE_LOCAL_IMAGE=false IMAGE_REGISTRY=docker.io/youruser IMAGE_TAG=v1 ./deploy.sh
-#
-# 4) Use ClusterIP instead of NodePort:
-#    SERVICE_TYPE=ClusterIP ./deploy.sh
-#
-# 5) Let Kubernetes choose NodePort (leave SERVICE_NODEPORT empty):
-#    SERVICE_NODEPORT="" ./deploy.sh
-#
+# deploy.sh -- load DB values from .env and pass them to Helm as --set db.* (no .env mount)
+# - CI is expected to build & push the image. Set USE_LOCAL_IMAGE=true to build and load locally (no push).
 set -euo pipefail
 
-# ----------------------------
-# Configurable defaults (change inline or set as env when running)
-# ----------------------------
-IMAGE_REGISTRY="${IMAGE_REGISTRY:-}"         # e.g. docker.io/youruser (leave blank to use image name only)
+# ------------------ Configurable defaults ------------------
 IMAGE_NAME="${IMAGE_NAME:-db-service}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
-USE_LOCAL_IMAGE="${USE_LOCAL_IMAGE:-true}"   # "true" to build and load into minikube, "false" to skip local build
-USE_MINIKUBE="${USE_MINIKUBE:-true}"         # if true and USE_LOCAL_IMAGE=true will minikube image load
+IMAGE_REPO="${IMAGE_REPO:-}"          # optional full repo (overrides DOCKER_HUB_USERNAME)
+DOCKER_HUB_USERNAME="${DOCKER_HUB_USERNAME:-}"  # used when IMAGE_REPO not set and USE_LOCAL_IMAGE=false
 CHART_DIR="${CHART_DIR:-./helm_chart}"
 RELEASE_NAME="${RELEASE_NAME:-db-service}"
-NAMESPACE="${NAMESPACE:-db}"
+NAMESPACE="${NAMESPACE:-default}"
 
-# Service settings (can override via env)
-SERVICE_TYPE="${SERVICE_TYPE:-NodePort}"           # NodePort or ClusterIP
-SERVICE_PORT="${SERVICE_PORT:-8080}"               # service port exposed inside cluster
-SERVICE_TARGETPORT="${SERVICE_TARGETPORT:-5432}"   # container port (Postgres default)
-SERVICE_NODEPORT="${SERVICE_NODEPORT:-30005}"     # NodePort to use. If empty, k8s will auto-assign
+SERVICE_TYPE="${SERVICE_TYPE:-NodePort}"
+SERVICE_PORT="${SERVICE_PORT:-8080}"
+SERVICE_TARGETPORT="${SERVICE_TARGETPORT:-8000}"
+SERVICE_NODEPORT="${SERVICE_NODEPORT:-}"  # optional
 
-# Postgres creds (cleartext ok for local demo)
-POSTGRES_USER="${POSTGRES_USER:-appuser}"
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-changeme}"
-POSTGRES_DB="${POSTGRES_DB:-appdb}"
+# Set to "true" to build a local image and load into minikube (no push)
+USE_LOCAL_IMAGE="${USE_LOCAL_IMAGE:-false}"
 
-# Extra Helm args if you want more overrides (optional)
-EXTRA_HELM_ARGS="${EXTRA_HELM_ARGS:-}"
+# ------------------ helpers ------------------
+info(){ printf "INFO: %s\n" "$*"; }
+warn(){ printf "WARN: %s\n" "$*"; }
+err(){ printf "ERROR: %s\n" "$*\n" >&2; }
 
-# ----------------------------
-# Derived values
-# ----------------------------
-if [ -n "${IMAGE_REGISTRY}" ]; then
-  FULL_IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+# ------------------ Load .env ------------------
+if [ -f .env ]; then
+  info "Loading .env into environment..."
+  # Export variables in .env (ignores commented lines). Keep values with spaces if quoted.
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
 else
-  FULL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
+  err ".env not found in repo root. Please create .env with required DB_* and other variables."
+  exit 1
 fi
 
-echo "==== db-service deploy ===="
-echo "Release:           $RELEASE_NAME"
-echo "Namespace:         $NAMESPACE"
-echo "Image:             $FULL_IMAGE"
-echo "Use local build:   $USE_LOCAL_IMAGE"
-echo "Service type:      $SERVICE_TYPE (port=${SERVICE_PORT}, targetPort=${SERVICE_TARGETPORT}, nodePort=${SERVICE_NODEPORT})"
-echo "Postgres DB/user:  ${POSTGRES_DB} / ${POSTGRES_USER}"
-echo "Helm chart path:   ${CHART_DIR}"
-echo "Extra helm args:   ${EXTRA_HELM_ARGS}"
-echo "=========================="
+# ------------------ Validate required DB vars ------------------
+: "${DB_HOST:?DB_HOST must be set in .env}"
+: "${DB_PORT:?DB_PORT must be set in .env}"
+: "${DB_USER:?DB_USER must be set in .env}"
+: "${DB_PASSWORD:?DB_PASSWORD must be set in .env}"
+: "${DB_NAME:?DB_NAME must be set in .env}"
 
+# Validate DB_PORT is a number
+if ! echo "$DB_PORT" | grep -E '^[0-9]+$' >/dev/null 2>&1; then
+  err "DB_PORT must be a numeric port (found: '$DB_PORT'). Fix .env and retry."
+  exit 1
+fi
 
-# 1) Build image (optional) and load into minikube
+# ------------------ Decide image repository ------------------
+if [ -n "${IMAGE_REPO}" ]; then
+  FULL_REPO="${IMAGE_REPO}"
+else
+  if [ "${USE_LOCAL_IMAGE}" = "true" ]; then
+    FULL_REPO="${IMAGE_NAME}"
+  else
+    if [ -z "${DOCKER_HUB_USERNAME:-}" ]; then
+      err "DOCKER_HUB_USERNAME not set in .env (and IMAGE_REPO not provided). Set one, or set USE_LOCAL_IMAGE=true."
+      exit 1
+    fi
+    FULL_REPO="${DOCKER_HUB_USERNAME}/${IMAGE_NAME}"
+  fi
+fi
+
+FULL_IMAGE="${FULL_REPO}:${IMAGE_TAG}"
+
+info "Release:        ${RELEASE_NAME}"
+info "Namespace:      ${NAMESPACE}"
+info "Image (will be used): ${FULL_IMAGE}"
+info "Service type:   ${SERVICE_TYPE} port=${SERVICE_PORT}, targetPort=${SERVICE_TARGETPORT}"
+info "USE_LOCAL_IMAGE: ${USE_LOCAL_IMAGE}"
+# Do not echo DB_PASSWORD in logs
+info "DB from .env:   host=${DB_HOST} port=${DB_PORT} user=${DB_USER} db=${DB_NAME}"
+
+# ------------------ minikube/kubectl detection ------------------
+KUBECTL_CMD=""
+if command -v kubectl >/dev/null 2>&1; then
+  KUBECTL_CMD="kubectl"
+elif command -v minikube >/dev/null 2>&1; then
+  KUBECTL_CMD="minikube"
+else
+  warn "Neither 'kubectl' nor 'minikube' command found in PATH. Helm will still run, but kubectl operations may fail."
+fi
+
+run_kubectl(){
+  if [ "${KUBECTL_CMD}" = "kubectl" ]; then
+    kubectl "$@"
+  else
+    minikube kubectl -- "$@"
+  fi
+}
+
+# ------------------ Build local image (optional) ------------------
 if [ "${USE_LOCAL_IMAGE}" = "true" ]; then
-  echo "Building Docker image: ${FULL_IMAGE}"
+  info "Building local image ${FULL_IMAGE} ..."
   docker build -t "${FULL_IMAGE}" .
 
-  if [ "${USE_MINIKUBE}" = "true" ]; then
-    if command -v minikube >/dev/null 2>&1; then
-      echo "Loading image into Minikube..."
-      minikube image load "${FULL_IMAGE}"
-    else
-      echo "Warning: minikube not found in PATH; skipping minikube image load."
-    fi
+  if command -v minikube >/dev/null 2>&1; then
+    info "Loading image into Minikube..."
+    minikube image load "${FULL_IMAGE}"
+  else
+    warn "minikube not found; cluster might not access local image."
   fi
 else
-  echo "Skipping local build; using image: ${FULL_IMAGE}"
+  info "Skipping local build. Using published image ${FULL_IMAGE} (CI should have pushed it)."
 fi
 
-# 2) Ensure namespace exists
-if ! kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1; then
-  echo "Creating namespace: ${NAMESPACE}"
-  kubectl create namespace "${NAMESPACE}"
-else
-  echo "Namespace ${NAMESPACE} already exists."
+# ------------------ Ensure namespace ------------------
+if [ -n "${KUBECTL_CMD}" ]; then
+  if ! run_kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1; then
+    info "Creating namespace ${NAMESPACE}"
+    run_kubectl create namespace "${NAMESPACE}"
+  else
+    info "Namespace ${NAMESPACE} exists."
+  fi
 fi
 
-# 3) Create/replace Kubernetes secret for Postgres credentials (cleartext)
-SECRET_NAME="${RELEASE_NAME}-secret"
-echo "Creating/updating secret: ${SECRET_NAME} in namespace ${NAMESPACE}"
-kubectl -n "${NAMESPACE}" delete secret "${SECRET_NAME}" --ignore-not-found
-kubectl -n "${NAMESPACE}" create secret generic "${SECRET_NAME}" \
-  --from-literal=postgres-user="${POSTGRES_USER}" \
-  --from-literal=postgres-password="${POSTGRES_PASSWORD}" \
-  --from-literal=postgres-database="${POSTGRES_DB}"
-
-# 4) Prepare Helm --set args (image, service, postgres values)
-# Note: we do not pass postgres.password to helm via --set to avoid embedding it in helm values; the k8s secret created above is used by the chart.
+# ------------------ Prepare Helm --set arguments ------------------
 HELM_SET_ARGS=(
-  "image.repository=${IMAGE_REGISTRY:+${IMAGE_REGISTRY}/}${IMAGE_NAME}"
+  "image.repository=${FULL_REPO}"
   "image.tag=${IMAGE_TAG}"
   "service.type=${SERVICE_TYPE}"
   "service.port=${SERVICE_PORT}"
+  "service.targetPort=${SERVICE_TARGETPORT}"
+)
+
+# optional nodePort only if provided
+if [ -n "${SERVICE_NODEPORT}" ]; then
+  HELM_SET_ARGS+=("service.nodePort=${SERVICE_NODEPORT}")
+fi
+
+# add db.* values read from .env
+HELM_SET_ARGS+=(
+  "db.host=${DB_HOST}"
+  "db.port=${DB_PORT}"
+  "db.user=${DB_USER}"
+  "db.password=${DB_PASSWORD}"
+  "db.database=${DB_NAME}"
+)
+
+# Join into comma-separated string for --set
+HELM_SET_CSV=""
+for it in "${HELM_SET_ARGS[@]}"; do
+  if [ -z "${HELM_SET_CSV}" ]; then HELM_SET_CSV="$it"; else HELM_SET_CSV="${HELM_SET_CSV},${it}"; fi
+done
+
+# ------------------ Helm deploy ------------------
+info "Deploying with Helm (passing db.* via --set). Helm command will not mount .env into pod."
+
+helm upgrade --install "${RELEASE_NAME}" "${CHART_DIR}" \
+  --namespace "${NAMESPACE}" \
+  --create-namespace \
+  --set "${HELM_SET_CSV}" \
+  --wait
+
+info "Helm upgrade/install finished."
+
+# ------------------ Post-deploy checks ------------------
+if [ -n "${KUBECTL_CMD}" ]; then
+  info "Kubernetes resources in namespace ${NAMESPACE}:"
+  run_kubectl -n "${NAMESPACE}" get all || true
+
+  # Show service URL for minikube NodePort
+  if [ "${SERVICE_TYPE}" = "NodePort" ] && command -v minikube >/dev/null 2>&1; then
+    NODE_IP=$(minikube ip)
+    NODE_PORT="${SERVICE_NODEPORT}"
+    if [ -z "${NODE_PORT}" ]; then
+      NODE_PORT=$(run_kubectl -n "${NAMESPACE}" get svc "${RELEASE_NAME}" -o jsonpath='{.spec.ports[0].nodePort}')
+    fi
+    info "App should be reachable at: http://${NODE_IP}:${NODE_PORT}/health"
+    info "Try: curl http://${NODE_IP}:${NODE_PORT}/health"
+  else
+    info "To port-forward locally: kubectl -n ${NAMESPACE} port-forward svc/${RELEASE_NAME} ${SERVICE_PORT}:${SERVICE_TARGETPORT}"
+  fi
+fi
+
+info "Done."
