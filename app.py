@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 import os
-from sqlalchemy import create_engine, Column, Integer, String, MetaData, Table, select, JSON, Float
+from sqlalchemy import create_engine, Column, Integer, String, MetaData, Table, select, JSON, Float, inspect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
@@ -67,7 +67,7 @@ shipments = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("order_id", String, nullable=False),
-    Column("address", String, nullable=False),
+    Column("address", JSON, nullable=False),
     Column("items", JSON, nullable=False),
     Column("status", String, nullable=False),
 )
@@ -123,7 +123,7 @@ class PaymentOut(PaymentIn):
 class ShipmentIn(BaseModel):
     id: str
     order_id: str
-    address: str
+    address: dict
     items: list
     status: str
 
@@ -184,6 +184,31 @@ def delete_order(oid: str, db=Depends(get_db)):
     db.execute(orders.delete().where(orders.c.id==oid))
     db.commit()
     return
+
+# Safe refund-metadata endpoint
+@app.post("/orders/{oid}/refund-metadata", status_code=200)
+def add_refund_metadata(oid: str, payload: dict, db=Depends(get_db)):
+    """
+    payload: {"refund_attempt": {...}, "payment_refund_status": "refunded"}
+    This updates only columns that actually exist in the orders table. Safe to call
+    even if DB schema hasn't been altered.
+    """
+    try:
+        # Inspect existing order columns
+        inspector = inspect(engine)
+        cols = [c["name"] for c in inspector.get_columns("orders")]
+        # Filter payload to keys that are actual columns
+        to_update = {k: v for k, v in payload.items() if k in cols}
+        if not to_update:
+            # Nothing to update, return OK (best-effort)
+            return {"updated": False, "reason": "no matching columns"}
+        db.execute(orders.update().where(orders.c.id == oid).values(**to_update))
+        db.commit()
+        return {"updated": True}
+    except Exception as e:
+        db.rollback()
+        # Best-effort: swallow and return failure note, caller will ignore if desired
+        raise HTTPException(status_code=500, detail=f"Failed to apply refund metadata: {e}")
 
 # ---------------------------------------------------------------------
 # INVENTORY CRUD
