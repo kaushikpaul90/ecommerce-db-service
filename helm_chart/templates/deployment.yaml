@@ -15,25 +15,42 @@ spec:
         app: {{ include "db-service.name" . }}
     spec:
       containers:
-        - name: postgres
+        - name: db-service
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: "{{ .Values.image.pullPolicy | default "IfNotPresent" }}"
           ports:
-            - containerPort: {{ .Values.service.targetPort }}
-              name: postgres
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
           env:
-            - name: POSTGRES_DB
+            - name: DB_HOST
+              value: "{{ .Values.db.host }}"
+            - name: DB_PORT
+              value: "{{ .Values.db.port }}"
+            - name: DB_USER
               valueFrom:
                 secretKeyRef:
                   name: {{ include "db-service.fullname" . }}-secret
-                  key: postgres-database
-            - name: POSTGRES_USER
+                  key: db-user
+            - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "db-service.fullname" . }}-secret
-                  key: postgres-user
-            - name: POSTGRES_PASSWORD
+                  key: db-password
+            - name: DB_NAME
               valueFrom:
                 secretKeyRef:
                   name: {{ include "db-service.fullname" . }}-secret
-                  key: postgres-password
+                  key: db-database
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.service.targetPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.service.targetPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 20

@@ -3,10 +3,4 @@ name: db-service
 description: Helm chart for db-service (PostgreSQL)
 type: application
 version: 0.1.0
-appVersion: "15" # Postgres major version
-keywords:
-  - database
-  - postgres
-maintainers:
-  - name: devops
-    email: 2024mt03072@wilp.bits-pilani.ac.in
+appVersion: "0.3"

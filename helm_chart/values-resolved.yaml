@@ -1,16 +1,16 @@
 replicaCount: 1
 
 image:
-  repository: "${DOCKER_HUB_USERNAME}/db-service"
+  repository: "kaushikpaul90/db-service"
   tag: latest
   pullPolicy: IfNotPresent
 
 db:
   host: "postgres"
-  port: "${DB_PORT}"
-  database: "${DB_NAME}"
-  user: "${DB_USER}"
-  password: "${DB_PASSWORD}"
+  port: "5432"
+  database: "ecommerce_db"
+  user: "postgres"
+  password: "postgres"
 
 service:
   type: NodePort
