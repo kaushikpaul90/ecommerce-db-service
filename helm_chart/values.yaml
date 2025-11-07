@@ -1,0 +1,32 @@
+replicaCount: 1
+
+image:
+  repository: "${DOCKER_HUB_USERNAME}/db-service"
+  tag: latest
+  pullPolicy: Always
+
+postgres:
+  database: "${POSTGRES_DB}"
+  user: "${POSTGRES_USER}"
+  password: "${POSTGRES_PASSWORD}"
+
+service:
+  type: NodePort
+  port: 8080 # inside cluster
+  targetPort: 5432 # container port
+  nodePort: 30000 # optional, else k8s will auto-assign
+
+containerPort: 8000
+
+resources: {}
+
+persistence:
+  enabled: false
+  size: 5Gi
+  storageClass: ""
+
+hpa:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
