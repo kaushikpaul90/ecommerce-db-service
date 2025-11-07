@@ -1,47 +1,39 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "database-service.fullname" . }}
+  name: {{ include "db-service.fullname" . }}
   labels:
-    app: {{ include "database-service.name" . }}
+    app: {{ include "db-service.name" . }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app: {{ include "database-service.name" . }}
+      app: {{ include "db-service.name" . }}
   template:
     metadata:
       labels:
-        app: {{ include "database-service.name" . }}
+        app: {{ include "db-service.name" . }}
     spec:
-      {{- if .Values.image.imagePullSecrets }}
-      imagePullSecrets:
-        {{- range .Values.image.imagePullSecrets }}
-        - name: {{ . }}
-        {{- end }}
-      {{- end }}
       containers:
-        - name: database-service
+        - name: postgres
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
-            - containerPort: 8000
+            - containerPort: {{ .Values.service.targetPort }}
+              name: postgres
           env:
-            - name: DB_HOST
-              value: "{{ .Values.env.DB_HOST }}"
-            - name: DB_PORT
-              value: "{{ .Values.env.DB_PORT }}"
-            - name: DB_NAME
-              value: "{{ .Values.env.DB_NAME }}"
-            - name: DB_USER
+            - name: POSTGRES_DB
               valueFrom:
                 secretKeyRef:
-                  name: db-credentials
-                  key: username
-            - name: DB_PASSWORD
+                  name: {{ include "db-service.fullname" . }}-secret
+                  key: postgres-database
+            - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: db-credentials
-                  key: password
-          resources:
-            {{- toYaml .Values.resources | nindent 16 }}
+                  name: {{ include "db-service.fullname" . }}-secret
+                  key: postgres-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "db-service.fullname" . }}-secret
+                  key: postgres-password
