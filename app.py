@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, Column, Integer, String, MetaData, Table, 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
+from typing import Dict, Any
 
 load_dotenv()  # read .env in dev
 
@@ -31,6 +32,8 @@ orders = Table(
     Column("total", Float, nullable=False),
     Column("currency", String, nullable=True),
     Column("status", String, nullable=False),
+    Column("refund_attempt", JSON, nullable=True),
+    Column("payment_refund_status", String, nullable=True)
 )
 
 # Inventory table (simple SKU -> quantity)
@@ -90,6 +93,8 @@ class OrderIn(BaseModel):
     total: float
     currency: Optional[str] = "INR"
     status: str
+    refund_attempt: Optional[Dict[str, Any]] = None
+    payment_refund_status: Optional[str] = None
 
 class OrderOut(OrderIn):
     pass
@@ -175,9 +180,32 @@ def list_orders(db=Depends(get_db)):
 
 @app.put("/orders/{oid}", response_model=OrderOut)
 def update_order(oid: str, payload: OrderIn, db=Depends(get_db)):
-    db.execute(orders.update().where(orders.c.id==oid).values(**payload.dict()))
-    db.commit()
-    return payload
+    """
+    Merge update: preserve existing columns (including refund metadata)
+    unless the incoming payload explicitly sets them.
+    """
+    try:
+        with db.begin():
+            q = select(orders).where(orders.c.id == oid)
+            existing = db.execute(q).first()
+            if not existing:
+                raise HTTPException(status_code=404, detail="order not found")
+            existing_obj = dict(existing._mapping)
+
+            # payload may be a BaseModel; use exclude_unset to avoid overwriting with defaults
+            # BUT FastAPI always builds the model - to support partial updates, you can accept
+            # a Pydantic model with optional fields or use request.json directly. For simplicity
+            # we treat incoming payload's values and overwrite only keys present and not None.
+            incoming = payload.dict(exclude_unset=True)
+
+            # Merge: incoming overrides existing, but keys not present in incoming stay intact
+            merged = {**existing_obj, **incoming}
+
+            db.execute(orders.update().where(orders.c.id == oid).values(**merged))
+        return merged
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"DB error updating order: {e}")
 
 @app.delete("/orders/{oid}", status_code=204)
 def delete_order(oid: str, db=Depends(get_db)):
@@ -204,7 +232,7 @@ def add_refund_metadata(oid: str, payload: dict, db=Depends(get_db)):
             return {"updated": False, "reason": "no matching columns"}
         db.execute(orders.update().where(orders.c.id == oid).values(**to_update))
         db.commit()
-        return {"updated": True}
+        return {"updated": True, "updated_keys": list(to_update.keys())}
     except Exception as e:
         db.rollback()
         # Best-effort: swallow and return failure note, caller will ignore if desired
