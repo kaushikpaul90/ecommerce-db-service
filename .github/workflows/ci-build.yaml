@@ -34,9 +34,9 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          # tags: |
-          #   ${{ secrets.DOCKER_REGISTRY || 'docker.io' }}/${{ secrets.DOCKER_HUB_USERNAME }}/db-service:latest
-          #   ${{ secrets.DOCKER_REGISTRY || 'docker.io' }}/${{ secrets.DOCKER_HUB_USERNAME }}/db-service:${{ github.sha }}
+          tags: |
+            ${{ secrets.DOCKER_REGISTRY || 'docker.io' }}/${{ secrets.DOCKER_HUB_USERNAME }}/db-service:latest
+            ${{ secrets.DOCKER_REGISTRY || 'docker.io' }}/${{ secrets.DOCKER_HUB_USERNAME }}/db-service:${{ github.sha }}
           platforms: linux/amd64,linux/arm64
 
       - name: Finish
