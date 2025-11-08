@@ -80,7 +80,7 @@ metadata.create_all(engine)
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
-app = FastAPI(title="DATABASE_SERVICE - Aggregated DB APIs", version="0.3")
+app = FastAPI(title="DATABASE_SERVICE - Aggregated DB APIs", version="1.0")
 
 # ---------------------------------------------------------------------
 # MODELS
@@ -102,7 +102,7 @@ class OrderOut(OrderIn):
 class InventoryIn(BaseModel):
     id: str
     orderId: str
-    items: list 
+    items: list
     status: str
 
 class InventoryOut(InventoryIn):
