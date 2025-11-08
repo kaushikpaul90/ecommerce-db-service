@@ -102,7 +102,7 @@ class OrderOut(OrderIn):
 class InventoryIn(BaseModel):
     id: str
     orderId: str
-    items: list
+    items: list 
     status: str
 
 class InventoryOut(InventoryIn):
