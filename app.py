@@ -100,8 +100,10 @@ class OrderOut(OrderIn):
     pass
 
 class InventoryIn(BaseModel):
-    sku: str
-    quantity: int
+    id: str
+    orderId: str
+    items: list
+    status: str
 
 class InventoryOut(InventoryIn):
     pass
