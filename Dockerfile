@@ -1,3 +1,9 @@
+############################################################
+# Dockerfile for Order Service (FastAPI microservice)
+# Builds a minimal Python 3.11 container for production use
+############################################################
+
+# Use official Python slim image for smaller footprint
 FROM python:3.11-slim
 
 # Prevent Python from writing .pyc files and enable stdout/stderr buffering
@@ -5,6 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV POETRY_VIRTUALENVS_CREATE=false
 
+# Set working directory inside the container
 WORKDIR /app
 
 # Install system dependencies required to build some Python packages (e.g. psycopg2)
@@ -33,6 +40,7 @@ RUN chown -R appuser:appuser /app
 
 USER appuser
 
+# Expose FastAPI service port
 EXPOSE 8000
 
 # Run the FastAPI app defined in [app.py](app.py) (FastAPI instance `app`)
